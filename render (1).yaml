@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: linkpulse-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: sh start-render.sh
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: linkpulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: linkpulse-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: BASE_URL
+        fromService:
+          name: linkpulse-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+  - type: keyvalue
+    name: linkpulse-redis
+    ipAllowList: []  # private network only -- api reaches it internally
+    plan: free
+    maxmemoryPolicy: noeviction  # don't evict queued tasks under memory pressure
+
+databases:
+  - name: linkpulse-db
+    plan: free
+
+# NOTE ON ARCHITECTURE: Render's free tier only offers free instances for
+# Web Services, Postgres, and Redis -- NOT Background Workers (those need a
+# paid plan, ~$7/mo minimum). To keep this deployment fully free, the API
+# and Celery worker run together in the SAME container via start-render.sh,
+# instead of as two separate services.
+#
+# This is a hosting-cost workaround, not the intended architecture. Locally,
+# via docker-compose.yml, the API and worker run as genuinely separate
+# containers -- that's the setup to describe when explaining this project's
+# design (e.g. in an interview). If you later deploy on a platform that
+# supports free/cheap background workers (Railway, Fly.io), split them back
+# into two services using the original two-service render.yaml pattern.
