@@ -26,6 +26,23 @@ waits on a database write. It queues a Celery task and returns the 302
 immediately — click logging, geo lookup, and webhook dispatch all happen
 after the user is already on their way to the target URL.
 
+## Design decisions worth reading before an interview
+
+- **Short codes**: generated with `secrets` (CSPRNG, not `random`), base62,
+  7 chars by default (~3.5 trillion combinations). Collisions are handled
+  optimistically — insert and retry on a DB unique-constraint conflict,
+  rather than pre-checking existence, which avoids a race condition under
+  concurrent requests.
+- **Rate limiting**: Redis sorted-set sliding window, not a fixed-window
+  counter. A fixed window lets a client burst up to 2x the limit across a
+  window boundary; the sliding window tracks actual timestamps to avoid that.
+- **Webhook retries**: exponential backoff (2s → 4s → 8s → 16s → 32s, capped,
+  with jitter) via Celery's `autoretry_for`. Retrying a failing endpoint at a
+  constant interval hammers a service that's already struggling — backoff
+  gives it room to recover.
+- **Denormalized click_count on URL**: kept in sync inside the same task that
+  writes the ClickEvent row, so reads never need a `COUNT(*)` over
+  potentially millions of click rows.
 
 ## Running it
 
@@ -70,7 +87,15 @@ pytest
 Covers short-code generation (format, uniqueness under load) and the rate
 limiter (allows under limit, blocks over limit, window expiry behavior).
 
+## What's intentionally left as a "next step"
 
+- Alembic migrations (currently using `Base.metadata.create_all` for local
+  dev simplicity — noted in `app/main.py`)
+- Real geo-IP lookup in `click_tasks.py` (stubbed, structured so a real
+  provider drops in without touching calling code)
+- Analytics rollup endpoint (hourly/daily aggregation from `click_events`)
+- Horizontal scaling notes: with click writes decoupled via Celery, the
+  bottleneck under heavy load becomes worker throughput — scaling worker
   count and adding a read replica for analytics queries would be the next
   levers to pull.
 
